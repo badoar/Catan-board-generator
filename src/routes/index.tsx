@@ -334,22 +334,6 @@ function Index() {
               >
                 🎲 Generate New Board
               </button>
-
-              {/* Legend */}
-              <div className="mt-8 pt-6 border-t border-neutral-200">
-                <h3 className="font-semibold text-neutral-900 mb-4">Resource Legend</h3>
-                <div className="space-y-2">
-                  {Object.entries(RESOURCE_NAMES).map(([key, name]) => (
-                    <div key={key} className="flex items-center space-x-3">
-                      <div
-                        className="w-6 h-6 rounded border-2 border-neutral-700"
-                        style={{ backgroundColor: RESOURCE_COLORS[key as ResourceType] }}
-                      />
-                      <span className="text-sm text-neutral-700">{name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
           </div>
 
@@ -362,8 +346,8 @@ function Index() {
                 style={{ maxHeight: '800px' }}
               >
                 {board.map((hex, index) => {
-                  const x = hexSize * 1.5 * hex.q
-                  const y = hexHeight * (hex.r + hex.q / 2)
+                  const x = hexSize * Math.sqrt(3) * (hex.q + hex.r / 2)
+                  const y = hexSize * 1.5 * hex.r
 
                   return (
                     <g key={index} transform={`translate(${x}, ${y})`}>
@@ -404,6 +388,22 @@ function Index() {
                   )
                 })}
               </svg>
+            </div>
+
+            {/* Legend */}
+            <div className="card p-6 mt-6">
+              <h3 className="font-semibold text-neutral-900 mb-4 text-center">Resource Legend</h3>
+              <div className="flex flex-wrap justify-center gap-4">
+                {Object.entries(RESOURCE_NAMES).map(([key, name]) => (
+                  <div key={key} className="flex items-center space-x-2">
+                    <div
+                      className="w-6 h-6 rounded border-2 border-neutral-700"
+                      style={{ backgroundColor: RESOURCE_COLORS[key as ResourceType] }}
+                    />
+                    <span className="text-sm text-neutral-700">{name}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
