@@ -117,10 +117,13 @@ function checkConstraints(hexes: Hex[], options: GenerationOptions): boolean {
 
     for (const neighborPos of neighbors) {
       const neighbor = hexes.find(h => h.q === neighborPos.q && h.r === neighborPos.r)
-      if (!neighbor || neighbor.resource === 'desert') continue
+      if (!neighbor) continue
+
+      // Skip number checks if either hex is desert (has no number)
+      const skipNumberChecks = hex.resource === 'desert' || neighbor.resource === 'desert'
 
       // Check high numbers (6 & 8)
-      if (!options.adjacent_6_8) {
+      if (!skipNumberChecks && !options.adjacent_6_8) {
         if ((hex.number === 6 || hex.number === 8) &&
             (neighbor.number === 6 || neighbor.number === 8)) {
           return false
@@ -128,7 +131,7 @@ function checkConstraints(hexes: Hex[], options: GenerationOptions): boolean {
       }
 
       // Check low numbers (2 & 12)
-      if (!options.adjacent_2_12) {
+      if (!skipNumberChecks && !options.adjacent_2_12) {
         if ((hex.number === 2 || hex.number === 12) &&
             (neighbor.number === 2 || neighbor.number === 12)) {
           return false
@@ -136,15 +139,16 @@ function checkConstraints(hexes: Hex[], options: GenerationOptions): boolean {
       }
 
       // Check same numbers
-      if (!options.adjacent_same_numbers) {
+      if (!skipNumberChecks && !options.adjacent_same_numbers) {
         if (hex.number !== null && hex.number === neighbor.number) {
           return false
         }
       }
 
-      // Check same resource
+      // Check same resource (skip if either is desert)
       if (!options.adjacent_same_resource) {
-        if (hex.resource !== 'desert' && hex.resource === neighbor.resource) {
+        if (hex.resource !== 'desert' && neighbor.resource !== 'desert' &&
+            hex.resource === neighbor.resource) {
           return false
         }
       }
@@ -506,8 +510,8 @@ function Index() {
                   const hexX = hexSize * Math.sqrt(3) * (port.q + port.r / 2)
                   const hexY = hexSize * 1.5 * port.r
 
-                  // Calculate vertex position (pointy-top hexagon)
-                  const vertexAngle = (Math.PI / 3) * port.vertex
+                  // Calculate vertex position - must match hexagon vertex angles
+                  const vertexAngle = (Math.PI / 3) * port.vertex - Math.PI / 6
                   const vertexX = hexX + hexSize * Math.cos(vertexAngle)
                   const vertexY = hexY + hexSize * Math.sin(vertexAngle)
 
