@@ -16,7 +16,9 @@ interface Hex {
 }
 
 interface Port {
-  edge: number
+  q: number
+  r: number
+  vertex: number
   type: PortType
 }
 
@@ -54,17 +56,18 @@ const HEX_POSITIONS = [
   { q: -1, r: 2 }, { q: 0, r: 2 }, { q: 1, r: 1 },
 ]
 
-// Port placements (edge indices around the board)
-const PORT_CONFIGS: { edge: number; type: PortType }[] = [
-  { edge: 0, type: '3:1' },
-  { edge: 1, type: 'wood' },
-  { edge: 2, type: '3:1' },
-  { edge: 3, type: 'brick' },
-  { edge: 4, type: '3:1' },
-  { edge: 5, type: 'wheat' },
-  { edge: 6, type: '3:1' },
-  { edge: 7, type: 'sheep' },
-  { edge: 8, type: 'ore' },
+// Port placements with vertex positions (q, r, vertex)
+// vertex: 0=E, 1=NE, 2=NW, 3=W, 4=SW, 5=SE
+const PORT_CONFIGS: { q: number; r: number; vertex: number; type: PortType }[] = [
+  { q: 2, r: -2, vertex: 1, type: '3:1' },
+  { q: 2, r: -2, vertex: 2, type: 'wood' },
+  { q: 0, r: -2, vertex: 2, type: '3:1' },
+  { q: -1, r: -1, vertex: 2, type: 'brick' },
+  { q: -2, r: 0, vertex: 3, type: '3:1' },
+  { q: -2, r: 2, vertex: 4, type: 'wheat' },
+  { q: 0, r: 2, vertex: 4, type: '3:1' },
+  { q: 1, r: 1, vertex: 5, type: 'sheep' },
+  { q: 2, r: 0, vertex: 0, type: 'ore' },
 ]
 
 function shuffle<T>(array: T[]): T[] {
@@ -368,27 +371,28 @@ function Index() {
 
                 {/* Port indicators */}
                 {ports.map((port, index) => {
-                  const angle = (index / ports.length) * Math.PI * 2
-                  const distance = 180
-                  const x = Math.cos(angle) * distance
-                  const y = Math.sin(angle) * distance
+                  // Calculate hex center position
+                  const hexX = hexSize * Math.sqrt(3) * (port.q + port.r / 2)
+                  const hexY = hexSize * 1.5 * port.r
+
+                  // Calculate vertex position (pointy-top hexagon)
+                  // vertex 0=E, 1=NE, 2=NW, 3=W, 4=SW, 5=SE
+                  const vertexAngle = (Math.PI / 3) * port.vertex
+                  const vertexX = hexX + hexSize * Math.cos(vertexAngle)
+                  const vertexY = hexY + hexSize * Math.sin(vertexAngle)
 
                   return (
-                    <g key={`port-${index}`} transform={`translate(${x}, ${y})`}>
-                      <rect
-                        x={-15}
-                        y={-10}
-                        width={30}
-                        height={20}
+                    <g key={`port-${index}`} transform={`translate(${vertexX}, ${vertexY})`}>
+                      <circle
+                        r={12}
                         fill={port.type === '3:1' ? '#8B4513' : RESOURCE_COLORS[port.type as ResourceType]}
                         stroke="#000"
-                        strokeWidth="1"
-                        rx={3}
+                        strokeWidth="2"
                       />
                       <text
                         textAnchor="middle"
                         dy="0.35em"
-                        fontSize="10"
+                        fontSize="9"
                         fontWeight="bold"
                         fill="#FFF"
                       >
