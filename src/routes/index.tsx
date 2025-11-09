@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 
 export const Route = createFileRoute('/')({
   component: Index,
@@ -94,83 +94,105 @@ class SeededRandom {
   }
 }
 
+// Get all 6 neighbors of a hex in axial coordinates
 function getNeighbors(q: number, r: number): { q: number; r: number }[] {
   return [
-    { q: q + 1, r: r },
-    { q: q + 1, r: r - 1 },
-    { q: q, r: r - 1 },
-    { q: q - 1, r: r },
-    { q: q - 1, r: r + 1 },
-    { q: q, r: r + 1 },
+    { q: q + 1, r: r },     // East
+    { q: q + 1, r: r - 1 }, // Northeast
+    { q: q, r: r - 1 },     // Northwest
+    { q: q - 1, r: r },     // West
+    { q: q - 1, r: r + 1 }, // Southwest
+    { q: q, r: r + 1 },     // Southeast
   ]
 }
 
-function checkConstraints(hexes: Hex[], options: GenerationOptions): boolean {
-  for (let i = 0; i < hexes.length; i++) {
-    const hex = hexes[i]
-    const neighbors = getNeighbors(hex.q, hex.r)
-
-    // Check desert in center constraint
-    if (!options.desert_in_center && hex.resource === 'desert' && i === 0) {
+// Check if a board configuration violates any constraints
+function isValidBoard(hexes: Hex[], options: GenerationOptions): boolean {
+  // Check desert in center
+  if (!options.desert_in_center) {
+    const centerHex = hexes[0] // First hex is always center (0, 0)
+    if (centerHex.resource === 'desert') {
       return false
     }
+  }
+
+  // Build adjacency map for faster lookups
+  const hexMap = new Map<string, Hex>()
+  for (const hex of hexes) {
+    hexMap.set(`${hex.q},${hex.r}`, hex)
+  }
+
+  // Check adjacency constraints
+  for (const hex of hexes) {
+    const neighbors = getNeighbors(hex.q, hex.r)
 
     for (const neighborPos of neighbors) {
-      const neighbor = hexes.find(h => h.q === neighborPos.q && h.r === neighborPos.r)
+      const neighbor = hexMap.get(`${neighborPos.q},${neighborPos.r}`)
       if (!neighbor) continue
 
-      // Skip number checks if either hex is desert (has no number)
-      const skipNumberChecks = hex.resource === 'desert' || neighbor.resource === 'desert'
+      // Only check each pair once (avoid duplicate checks)
+      if (hex.q < neighbor.q || (hex.q === neighbor.q && hex.r < neighbor.r)) {
+        continue
+      }
 
-      // Check high numbers (6 & 8)
-      if (!skipNumberChecks && !options.adjacent_6_8) {
-        if ((hex.number === 6 || hex.number === 8) &&
-            (neighbor.number === 6 || neighbor.number === 8)) {
+      // Skip number comparisons if either hex is desert
+      const bothHaveNumbers = hex.resource !== 'desert' && neighbor.resource !== 'desert'
+
+      // Constraint: 6 & 8 cannot touch (unless allowed)
+      if (bothHaveNumbers && !options.adjacent_6_8) {
+        const isHex68 = hex.number === 6 || hex.number === 8
+        const isNeighbor68 = neighbor.number === 6 || neighbor.number === 8
+        if (isHex68 && isNeighbor68) {
           return false
         }
       }
 
-      // Check low numbers (2 & 12)
-      if (!skipNumberChecks && !options.adjacent_2_12) {
-        if ((hex.number === 2 || hex.number === 12) &&
-            (neighbor.number === 2 || neighbor.number === 12)) {
+      // Constraint: 2 & 12 cannot touch (unless allowed)
+      if (bothHaveNumbers && !options.adjacent_2_12) {
+        const isHex212 = hex.number === 2 || hex.number === 12
+        const isNeighbor212 = neighbor.number === 2 || neighbor.number === 12
+        if (isHex212 && isNeighbor212) {
           return false
         }
       }
 
-      // Check same numbers
-      if (!skipNumberChecks && !options.adjacent_same_numbers) {
-        if (hex.number !== null && hex.number === neighbor.number) {
+      // Constraint: Same numbers cannot touch (unless allowed)
+      if (bothHaveNumbers && !options.adjacent_same_numbers) {
+        if (hex.number === neighbor.number) {
           return false
         }
       }
 
-      // Check same resource (skip if either is desert)
+      // Constraint: Same resources cannot touch (unless allowed)
       if (!options.adjacent_same_resource) {
-        if (hex.resource !== 'desert' && neighbor.resource !== 'desert' &&
-            hex.resource === neighbor.resource) {
-          return false
+        if (hex.resource !== 'desert' && neighbor.resource !== 'desert') {
+          if (hex.resource === neighbor.resource) {
+            return false
+          }
         }
       }
     }
   }
 
-  // Check resource multiple 6/8 constraint
+  // Constraint: No resource can have more than one 6 or more than one 8 (unless allowed)
   if (!options.resource_multiple_6_8) {
-    const resourceCounts: { [key in ResourceType]?: { sixes: number; eights: number } } = {}
+    const resourceNumbers: Map<ResourceType, number[]> = new Map()
 
     for (const hex of hexes) {
-      if (hex.resource === 'desert') continue
+      if (hex.resource === 'desert' || hex.number === null) continue
 
-      if (!resourceCounts[hex.resource]) {
-        resourceCounts[hex.resource] = { sixes: 0, eights: 0 }
+      if (!resourceNumbers.has(hex.resource)) {
+        resourceNumbers.set(hex.resource, [])
       }
+      resourceNumbers.get(hex.resource)!.push(hex.number)
+    }
 
-      if (hex.number === 6) resourceCounts[hex.resource]!.sixes++
-      if (hex.number === 8) resourceCounts[hex.resource]!.eights++
+    // Check each resource type
+    for (const [resource, numbers] of resourceNumbers.entries()) {
+      const sixCount = numbers.filter(n => n === 6).length
+      const eightCount = numbers.filter(n => n === 8).length
 
-      // Max 1 of each (6 or 8) per resource type
-      if (resourceCounts[hex.resource]!.sixes > 1 || resourceCounts[hex.resource]!.eights > 1) {
+      if (sixCount > 1 || eightCount > 1) {
         return false
       }
     }
@@ -179,23 +201,26 @@ function checkConstraints(hexes: Hex[], options: GenerationOptions): boolean {
   return true
 }
 
+// Generate a valid board with the given constraints and seed
 function generateBoard(options: GenerationOptions, seed: number): Hex[] {
-  let attempts = 0
   const maxAttempts = 10000
 
-  while (attempts < maxAttempts) {
-    const rng = new SeededRandom(seed + attempts)
-    const shuffledResources = rng.shuffle(RESOURCES)
-    const shuffledNumbers = rng.shuffle(NUMBERS)
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const rng = new SeededRandom(seed + attempt)
 
-    // Create hexes with resources
+    // Shuffle resources and numbers
+    const shuffledResources = rng.shuffle([...RESOURCES])
+    const shuffledNumbers = rng.shuffle([...NUMBERS])
+
+    // Create hexes with shuffled resources
     const hexes: Hex[] = HEX_POSITIONS.map((pos, index) => ({
-      ...pos,
+      q: pos.q,
+      r: pos.r,
       resource: shuffledResources[index],
       number: null,
     }))
 
-    // Assign the exact 18 numbers to non-desert hexes
+    // Assign numbers to non-desert hexes
     let numberIndex = 0
     for (const hex of hexes) {
       if (hex.resource !== 'desert') {
@@ -204,20 +229,23 @@ function generateBoard(options: GenerationOptions, seed: number): Hex[] {
       }
     }
 
-    if (checkConstraints(hexes, options)) {
+    // Check if this configuration is valid
+    if (isValidBoard(hexes, options)) {
+      console.log(`Valid board found after ${attempt + 1} attempts with seed ${seed}`)
       return hexes
     }
-
-    attempts++
   }
 
-  // If we couldn't generate a valid board, return a random one anyway
+  // If no valid board found, return the last attempt
+  console.warn(`No valid board found after ${maxAttempts} attempts. Returning unconstrained board.`)
+
   const rng = new SeededRandom(seed)
-  const shuffledResources = rng.shuffle(RESOURCES)
-  const shuffledNumbers = rng.shuffle(NUMBERS)
+  const shuffledResources = rng.shuffle([...RESOURCES])
+  const shuffledNumbers = rng.shuffle([...NUMBERS])
 
   const hexes: Hex[] = HEX_POSITIONS.map((pos, index) => ({
-    ...pos,
+    q: pos.q,
+    r: pos.r,
     resource: shuffledResources[index],
     number: null,
   }))
@@ -311,34 +339,38 @@ function Index() {
   const [board, setBoard] = useState<Hex[]>(() => generateBoard(options, seed))
   const [ports] = useState<Port[]>(() => {
     const rng = new SeededRandom(seed)
-    return rng.shuffle(PORT_CONFIGS)
+    return rng.shuffle([...PORT_CONFIGS])
   })
 
   const regenerateBoard = useCallback(() => {
     const newSeed = Math.floor(Math.random() * 1000000)
     setSeed(newSeed)
     setSeedInput(String(newSeed))
+    console.log('Generating new board with seed:', newSeed, 'and options:', options)
     setBoard(generateBoard(options, newSeed))
   }, [options])
 
   const applyOptions = useCallback(() => {
     const parsedSeed = parseInt(seedInput) || seed
     setSeed(parsedSeed)
+    console.log('Applying seed:', parsedSeed, 'with options:', options)
     setBoard(generateBoard(options, parsedSeed))
   }, [options, seedInput, seed])
 
-  // Update board when options change
-  useEffect(() => {
-    setBoard(generateBoard(options, seed))
-  }, [options, seed])
+  const toggleOption = useCallback((key: keyof GenerationOptions) => {
+    setOptions(prev => {
+      const newOptions = { ...prev, [key]: !prev[key] }
+      console.log('Options changed:', newOptions)
+      // Regenerate board immediately with new options
+      setTimeout(() => {
+        console.log('Regenerating board with new options and seed:', seed)
+        setBoard(generateBoard(newOptions, seed))
+      }, 0)
+      return newOptions
+    })
+  }, [seed])
 
   const hexSize = 50
-  const hexWidth = hexSize * 2
-  const hexHeight = hexSize * Math.sqrt(3)
-
-  const toggleOption = (key: keyof GenerationOptions) => {
-    setOptions(prev => ({ ...prev, [key]: !prev[key] }))
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 py-12 px-4">
