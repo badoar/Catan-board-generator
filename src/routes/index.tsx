@@ -137,18 +137,14 @@ function generateBoard(options: GenerationOptions): Hex[] {
     const shuffledResources = shuffle(RESOURCES)
     const shuffledNumbers = shuffle(NUMBERS)
 
-    const hexes: Hex[] = HEX_POSITIONS.map((pos, index) => {
-      const resource = shuffledResources[index]
-      const number = resource === 'desert' ? null : shuffledNumbers[shuffledNumbers.length - RESOURCES.filter(r => r !== 'desert').length + RESOURCES.slice(0, index).filter(r => r !== 'desert').length]
+    // Create hexes with resources
+    const hexes: Hex[] = HEX_POSITIONS.map((pos, index) => ({
+      ...pos,
+      resource: shuffledResources[index],
+      number: null,
+    }))
 
-      return {
-        ...pos,
-        resource,
-        number,
-      }
-    })
-
-    // Assign numbers to non-desert hexes
+    // Assign the exact 18 numbers to non-desert hexes
     let numberIndex = 0
     for (const hex of hexes) {
       if (hex.resource !== 'desert') {
@@ -164,12 +160,26 @@ function generateBoard(options: GenerationOptions): Hex[] {
     attempts++
   }
 
-  // If we couldn't generate a valid board, return anyway (user constraints might be impossible)
-  return HEX_POSITIONS.map((pos, index) => ({
+  // If we couldn't generate a valid board after max attempts, return the last attempt
+  // This ensures we still use all 18 numbers exactly once
+  const shuffledResources = shuffle(RESOURCES)
+  const shuffledNumbers = shuffle(NUMBERS)
+
+  const hexes: Hex[] = HEX_POSITIONS.map((pos, index) => ({
     ...pos,
-    resource: shuffle(RESOURCES)[index],
-    number: shuffle(RESOURCES)[index] === 'desert' ? null : shuffle(NUMBERS)[index % NUMBERS.length],
+    resource: shuffledResources[index],
+    number: null,
   }))
+
+  let numberIndex = 0
+  for (const hex of hexes) {
+    if (hex.resource !== 'desert') {
+      hex.number = shuffledNumbers[numberIndex]
+      numberIndex++
+    }
+  }
+
+  return hexes
 }
 
 const RESOURCE_COLORS = {
