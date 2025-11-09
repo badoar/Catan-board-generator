@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 
 export const Route = createFileRoute('/')({
   component: Index,
@@ -23,10 +23,12 @@ interface Port {
 }
 
 interface GenerationOptions {
-  highNumbersCanTouch: boolean // 6 & 8 can touch
-  lowNumbersCanTouch: boolean  // 2 & 12 can touch
-  sameNumbersCanTouch: boolean
-  sameResourceCanTouch: boolean
+  adjacent_6_8: boolean           // Allow 6 & 8 to touch
+  adjacent_2_12: boolean          // Allow 2 & 12 to touch
+  adjacent_same_numbers: boolean  // Allow same numbers to touch
+  adjacent_same_resource: boolean // Allow same resource to touch
+  resource_multiple_6_8: boolean  // Allow resource to have 2+ of 6/8
+  desert_in_center: boolean       // Allow desert in center
 }
 
 // Standard Catan resource distribution
@@ -57,7 +59,6 @@ const HEX_POSITIONS = [
 ]
 
 // Port placements with vertex positions (q, r, vertex)
-// vertex: 0=E, 1=NE, 2=NW, 3=W, 4=SW, 5=SE
 const PORT_CONFIGS: { q: number; r: number; vertex: number; type: PortType }[] = [
   { q: 2, r: -2, vertex: 1, type: '3:1' },
   { q: 2, r: -2, vertex: 2, type: 'wood' },
@@ -70,13 +71,27 @@ const PORT_CONFIGS: { q: number; r: number; vertex: number; type: PortType }[] =
   { q: 2, r: 0, vertex: 0, type: 'ore' },
 ]
 
-function shuffle<T>(array: T[]): T[] {
-  const newArray = [...array]
-  for (let i = newArray.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [newArray[i], newArray[j]] = [newArray[j], newArray[i]]
+// Seeded random number generator (Linear Congruential Generator)
+class SeededRandom {
+  private seed: number
+
+  constructor(seed: number) {
+    this.seed = seed % 233280
   }
-  return newArray
+
+  next(): number {
+    this.seed = (9301 * this.seed + 49297) % 233280
+    return this.seed / 233280
+  }
+
+  shuffle<T>(array: T[]): T[] {
+    const newArray = [...array]
+    for (let i = newArray.length - 1; i > 0; i--) {
+      const j = Math.floor(this.next() * (i + 1));
+      [newArray[i], newArray[j]] = [newArray[j], newArray[i]]
+    }
+    return newArray
+  }
 }
 
 function getNeighbors(q: number, r: number): { q: number; r: number }[] {
@@ -91,15 +106,21 @@ function getNeighbors(q: number, r: number): { q: number; r: number }[] {
 }
 
 function checkConstraints(hexes: Hex[], options: GenerationOptions): boolean {
-  for (const hex of hexes) {
+  for (let i = 0; i < hexes.length; i++) {
+    const hex = hexes[i]
     const neighbors = getNeighbors(hex.q, hex.r)
+
+    // Check desert in center constraint
+    if (!options.desert_in_center && hex.resource === 'desert' && i === 0) {
+      return false
+    }
 
     for (const neighborPos of neighbors) {
       const neighbor = hexes.find(h => h.q === neighborPos.q && h.r === neighborPos.r)
-      if (!neighbor) continue
+      if (!neighbor || neighbor.resource === 'desert') continue
 
       // Check high numbers (6 & 8)
-      if (!options.highNumbersCanTouch) {
+      if (!options.adjacent_6_8) {
         if ((hex.number === 6 || hex.number === 8) &&
             (neighbor.number === 6 || neighbor.number === 8)) {
           return false
@@ -107,7 +128,7 @@ function checkConstraints(hexes: Hex[], options: GenerationOptions): boolean {
       }
 
       // Check low numbers (2 & 12)
-      if (!options.lowNumbersCanTouch) {
+      if (!options.adjacent_2_12) {
         if ((hex.number === 2 || hex.number === 12) &&
             (neighbor.number === 2 || neighbor.number === 12)) {
           return false
@@ -115,30 +136,53 @@ function checkConstraints(hexes: Hex[], options: GenerationOptions): boolean {
       }
 
       // Check same numbers
-      if (!options.sameNumbersCanTouch) {
+      if (!options.adjacent_same_numbers) {
         if (hex.number !== null && hex.number === neighbor.number) {
           return false
         }
       }
 
       // Check same resource
-      if (!options.sameResourceCanTouch) {
+      if (!options.adjacent_same_resource) {
         if (hex.resource !== 'desert' && hex.resource === neighbor.resource) {
           return false
         }
       }
     }
   }
+
+  // Check resource multiple 6/8 constraint
+  if (!options.resource_multiple_6_8) {
+    const resourceCounts: { [key in ResourceType]?: { sixes: number; eights: number } } = {}
+
+    for (const hex of hexes) {
+      if (hex.resource === 'desert') continue
+
+      if (!resourceCounts[hex.resource]) {
+        resourceCounts[hex.resource] = { sixes: 0, eights: 0 }
+      }
+
+      if (hex.number === 6) resourceCounts[hex.resource]!.sixes++
+      if (hex.number === 8) resourceCounts[hex.resource]!.eights++
+
+      // Max 1 of each (6 or 8) per resource type
+      if (resourceCounts[hex.resource]!.sixes > 1 || resourceCounts[hex.resource]!.eights > 1) {
+        return false
+      }
+    }
+  }
+
   return true
 }
 
-function generateBoard(options: GenerationOptions): Hex[] {
+function generateBoard(options: GenerationOptions, seed: number): Hex[] {
   let attempts = 0
-  const maxAttempts = 1000
+  const maxAttempts = 10000
 
   while (attempts < maxAttempts) {
-    const shuffledResources = shuffle(RESOURCES)
-    const shuffledNumbers = shuffle(NUMBERS)
+    const rng = new SeededRandom(seed + attempts)
+    const shuffledResources = rng.shuffle(RESOURCES)
+    const shuffledNumbers = rng.shuffle(NUMBERS)
 
     // Create hexes with resources
     const hexes: Hex[] = HEX_POSITIONS.map((pos, index) => ({
@@ -163,10 +207,10 @@ function generateBoard(options: GenerationOptions): Hex[] {
     attempts++
   }
 
-  // If we couldn't generate a valid board after max attempts, return the last attempt
-  // This ensures we still use all 18 numbers exactly once
-  const shuffledResources = shuffle(RESOURCES)
-  const shuffledNumbers = shuffle(NUMBERS)
+  // If we couldn't generate a valid board, return a random one anyway
+  const rng = new SeededRandom(seed)
+  const shuffledResources = rng.shuffle(RESOURCES)
+  const shuffledNumbers = rng.shuffle(NUMBERS)
 
   const hexes: Hex[] = HEX_POSITIONS.map((pos, index) => ({
     ...pos,
@@ -248,23 +292,49 @@ function Hexagon({ hex, size }: { hex: Hex; size: number }) {
 }
 
 function Index() {
+  const [seed, setSeed] = useState<number>(() => Math.floor(Math.random() * 1000000))
+  const [seedInput, setSeedInput] = useState<string>(String(seed))
+
   const [options, setOptions] = useState<GenerationOptions>({
-    highNumbersCanTouch: false,
-    lowNumbersCanTouch: false,
-    sameNumbersCanTouch: false,
-    sameResourceCanTouch: false,
+    adjacent_6_8: false,
+    adjacent_2_12: false,
+    adjacent_same_numbers: false,
+    adjacent_same_resource: false,
+    resource_multiple_6_8: false,
+    desert_in_center: true,
   })
 
-  const [board, setBoard] = useState<Hex[]>(() => generateBoard(options))
-  const [ports] = useState<Port[]>(() => shuffle(PORT_CONFIGS))
+  const [board, setBoard] = useState<Hex[]>(() => generateBoard(options, seed))
+  const [ports] = useState<Port[]>(() => {
+    const rng = new SeededRandom(seed)
+    return rng.shuffle(PORT_CONFIGS)
+  })
 
   const regenerateBoard = useCallback(() => {
-    setBoard(generateBoard(options))
+    const newSeed = Math.floor(Math.random() * 1000000)
+    setSeed(newSeed)
+    setSeedInput(String(newSeed))
+    setBoard(generateBoard(options, newSeed))
   }, [options])
+
+  const applyOptions = useCallback(() => {
+    const parsedSeed = parseInt(seedInput) || seed
+    setSeed(parsedSeed)
+    setBoard(generateBoard(options, parsedSeed))
+  }, [options, seedInput, seed])
+
+  // Update board when options change
+  useEffect(() => {
+    setBoard(generateBoard(options, seed))
+  }, [options, seed])
 
   const hexSize = 50
   const hexWidth = hexSize * 2
   const hexHeight = hexSize * Math.sqrt(3)
+
+  const toggleOption = (key: keyof GenerationOptions) => {
+    setOptions(prev => ({ ...prev, [key]: !prev[key] }))
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 py-12 px-4">
@@ -274,8 +344,11 @@ function Index() {
           <h1 className="text-5xl font-display font-bold text-neutral-900 mb-4">
             Catan Board Generator
           </h1>
-          <p className="text-xl text-neutral-600">
-            Generate random, balanced boards for Settlers of Catan
+          <p className="text-xl text-neutral-600 mb-4">
+            Generate balanced, randomized boards for Settlers of Catan
+          </p>
+          <p className="text-sm text-neutral-500">
+            Inspired by catan.bunge.io • Enhanced with modern features
           </p>
         </div>
 
@@ -284,59 +357,111 @@ function Index() {
           <div className="lg:col-span-1">
             <div className="card p-6 sticky top-24">
               <h2 className="text-2xl font-display font-bold text-neutral-900 mb-6">
-                Generation Options
+                Settings
               </h2>
 
-              <div className="space-y-4 mb-6">
-                <label className="flex items-center space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
+              {/* Seed Input */}
+              <div className="mb-6 p-4 bg-neutral-50 rounded-lg">
+                <label className="block text-sm font-semibold text-neutral-900 mb-2">
+                  Board Seed
+                </label>
+                <input
+                  type="number"
+                  value={seedInput}
+                  onChange={(e) => setSeedInput(e.target.value)}
+                  className="input w-full mb-2"
+                  placeholder="Enter seed number"
+                />
+                <p className="text-xs text-neutral-600 mb-3">
+                  Use the same seed to recreate a board
+                </p>
+                <button
+                  onClick={applyOptions}
+                  className="btn-secondary w-full text-sm"
+                >
+                  Apply Seed
+                </button>
+              </div>
+
+              {/* Constraints */}
+              <div className="space-y-3 mb-6">
+                <h3 className="font-semibold text-neutral-900 mb-3">Constraints</h3>
+
+                <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
                   <input
                     type="checkbox"
-                    checked={options.highNumbersCanTouch}
-                    onChange={(e) => setOptions({ ...options, highNumbersCanTouch: e.target.checked })}
-                    className="w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
+                    checked={options.adjacent_6_8}
+                    onChange={() => toggleOption('adjacent_6_8')}
+                    className="mt-1 w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
                   />
-                  <div>
+                  <div className="flex-1">
                     <div className="font-semibold text-neutral-900">6 & 8 Can Touch</div>
-                    <div className="text-sm text-neutral-600">Allow high-value numbers adjacent</div>
+                    <div className="text-xs text-neutral-600">Allow high-probability numbers adjacent</div>
                   </div>
                 </label>
 
-                <label className="flex items-center space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
+                <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
                   <input
                     type="checkbox"
-                    checked={options.lowNumbersCanTouch}
-                    onChange={(e) => setOptions({ ...options, lowNumbersCanTouch: e.target.checked })}
-                    className="w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
+                    checked={options.adjacent_2_12}
+                    onChange={() => toggleOption('adjacent_2_12')}
+                    className="mt-1 w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
                   />
-                  <div>
+                  <div className="flex-1">
                     <div className="font-semibold text-neutral-900">2 & 12 Can Touch</div>
-                    <div className="text-sm text-neutral-600">Allow low-value numbers adjacent</div>
+                    <div className="text-xs text-neutral-600">Allow low-probability numbers adjacent</div>
                   </div>
                 </label>
 
-                <label className="flex items-center space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
+                <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
                   <input
                     type="checkbox"
-                    checked={options.sameNumbersCanTouch}
-                    onChange={(e) => setOptions({ ...options, sameNumbersCanTouch: e.target.checked })}
-                    className="w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
+                    checked={options.adjacent_same_numbers}
+                    onChange={() => toggleOption('adjacent_same_numbers')}
+                    className="mt-1 w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
                   />
-                  <div>
+                  <div className="flex-1">
                     <div className="font-semibold text-neutral-900">Same Numbers Can Touch</div>
-                    <div className="text-sm text-neutral-600">Allow identical numbers adjacent</div>
+                    <div className="text-xs text-neutral-600">Allow identical numbers adjacent</div>
                   </div>
                 </label>
 
-                <label className="flex items-center space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
+                <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
                   <input
                     type="checkbox"
-                    checked={options.sameResourceCanTouch}
-                    onChange={(e) => setOptions({ ...options, sameResourceCanTouch: e.target.checked })}
-                    className="w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
+                    checked={options.adjacent_same_resource}
+                    onChange={() => toggleOption('adjacent_same_resource')}
+                    className="mt-1 w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
                   />
-                  <div>
+                  <div className="flex-1">
                     <div className="font-semibold text-neutral-900">Same Resource Can Touch</div>
-                    <div className="text-sm text-neutral-600">Allow identical resources adjacent</div>
+                    <div className="text-xs text-neutral-600">Allow identical resources adjacent</div>
+                  </div>
+                </label>
+
+                <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={options.resource_multiple_6_8}
+                    onChange={() => toggleOption('resource_multiple_6_8')}
+                    className="mt-1 w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
+                  />
+                  <div className="flex-1">
+                    <div className="font-semibold text-neutral-900">Resource Can Have 2+ of 6/8</div>
+                    <div className="text-xs text-neutral-600">Allow resources multiple high numbers</div>
+                  </div>
+                </label>
+
+                <label className="flex items-start space-x-3 cursor-pointer p-3 rounded-lg hover:bg-neutral-50 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={options.desert_in_center}
+                    onChange={() => toggleOption('desert_in_center')}
+                    className="mt-1 w-5 h-5 text-primary-500 border-neutral-300 rounded focus:ring-primary-500"
+                  />
+                  <div className="flex-1">
+                    <div className="font-semibold text-neutral-900">Desert Can Be in Center</div>
+                    <div className="text-xs text-neutral-600">Allow desert in center position</div>
                   </div>
                 </label>
               </div>
@@ -347,6 +472,12 @@ function Index() {
               >
                 🎲 Generate New Board
               </button>
+
+              <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <p className="text-xs text-blue-800">
+                  <strong>Current Seed:</strong> {seed}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -376,7 +507,6 @@ function Index() {
                   const hexY = hexSize * 1.5 * port.r
 
                   // Calculate vertex position (pointy-top hexagon)
-                  // vertex 0=E, 1=NE, 2=NW, 3=W, 4=SW, 5=SE
                   const vertexAngle = (Math.PI / 3) * port.vertex
                   const vertexX = hexX + hexSize * Math.cos(vertexAngle)
                   const vertexY = hexY + hexSize * Math.sin(vertexAngle)
@@ -417,6 +547,21 @@ function Index() {
                     <span className="text-sm text-neutral-700">{name}</span>
                   </div>
                 ))}
+              </div>
+
+              {/* Probability Dots Info */}
+              <div className="mt-6 pt-4 border-t border-neutral-200">
+                <h4 className="font-semibold text-neutral-900 text-sm mb-2 text-center">Number Probability</h4>
+                <p className="text-xs text-neutral-600 text-center">
+                  Dots indicate dice roll probability: More dots = higher chance
+                </p>
+                <div className="flex justify-center gap-4 mt-3 text-xs text-neutral-700">
+                  <span>6,8: •••••</span>
+                  <span>5,9: ••••</span>
+                  <span>4,10: •••</span>
+                  <span>3,11: ••</span>
+                  <span>2,12: •</span>
+                </div>
               </div>
             </div>
           </div>
